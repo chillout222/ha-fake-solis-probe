@@ -1,0 +1,61 @@
+name: "Fake Solis Probe"
+version: "0.4.0"
+slug: "fake_solis_probe"
+description: "Emulates a Solis S6-EH1P hybrid inverter via Modbus TCP so Tibber Bridge can read PV data"
+arch:
+  - aarch64
+  - amd64
+startup: application
+boot: auto
+init: false
+stage: experimental
+
+homeassistant_api: true
+
+map:
+  - type: share
+    read_only: false
+
+ports:
+  "502/tcp": 502
+  "80/tcp": null
+
+ports_description:
+  "502/tcp": "Modbus TCP (Solis emulation)"
+  "80/tcp": "Optional HTTP probe (disabled by default)"
+
+options:
+  enable_http: false
+  log_raw_hex: false
+  mirror_writes: false
+  ha_sensor_pv_power: ""
+  ha_sensor_grid_power: ""
+  ha_sensor_total_energy: ""
+  ha_sensor_daily_energy: ""
+  grid_power_sign_convention: "negate"
+  pv_power_scale: 1.0
+  grid_power_scale: 1.0
+  total_energy_scale: 10.0
+  daily_energy_scale: 10.0
+  fake_vendor: "Ginlong"
+  fake_inverter_model: "Solis S6-EH1P"
+  fake_logger_model: "S2-WL-ST"
+  fake_serial: "S2WLSTFAKE001"
+
+schema:
+  enable_http: bool
+  log_raw_hex: bool
+  mirror_writes: bool
+  ha_sensor_pv_power: str
+  ha_sensor_grid_power: str
+  ha_sensor_total_energy: str
+  ha_sensor_daily_energy: str
+  grid_power_sign_convention: list(negate|direct)
+  pv_power_scale: float
+  grid_power_scale: float
+  total_energy_scale: float
+  daily_energy_scale: float
+  fake_vendor: str
+  fake_inverter_model: str
+  fake_logger_model: str
+  fake_serial: str
