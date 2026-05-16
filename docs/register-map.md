@@ -40,29 +40,62 @@ Signed 32-bit two's complement, big-endian, HI word first.
 | -800 | Importing 800W | 0xFFFFFCE0 | 0xFFFF | 0xFCE0 |
 | 0 | No grid exchange | 0x00000000 | 0x0000 | 0x0000 |
 
-## One-Time Input Registers (FC4) — Read at Initial Connection
+## Periodic Input Registers (FC4) — Read at Connection + Hourly
+
+These registers are read at initial connection AND approximately once per hour
+during ongoing operation (observed: every 60 minutes exactly):
 
 | Register | Qty | Observed Content | Purpose |
 |---|---|---|---|
-| **33004–33018** | 15 | ASCII model/serial string | Inverter identification |
+| **33004–33018** | 15 | ASCII model/serial string | Inverter identification / display in Tibber app |
 | **33067** | 1 | 0 | Unknown (possibly firmware status) |
 | **34502–34503** | 2 | 0 | Unknown (possibly total export energy) |
-| **35000** | 1 | **2030** (0x07EE) | Inverter type code — critical for model validation |
+| **35000** | 1 | **2030** (configurable) | Inverter type code — critical for model validation |
 
-### Inverter Type Code 2030
-
-Register 35000 = `2030` tells Tibber Bridge that this is a **Solis S6-EH1P** (1-phase
-low-voltage hybrid). This is the value that makes Tibber accept the inverter.
-
-Other model codes exist for other Solis hybrids (S5 EH3P, RHI, etc.) but have not
-been tested. If you need to simulate a different model, this is the register to change.
-
-Preload via `/share/fake_solis_probe/registers.json`:
-```json
-{
-  "35000": 2030
-}
+**Observation from 26h production log:**
 ```
+reg=33004  reads=27   (2-3 at connect + once per hour)
+reg=35000  reads=27   (identical pattern to 33004)
+reg=33057  reads=8921 (every 10 seconds — the live data registers)
+```
+
+Registers 33004 and 35000 are read with identical frequency, suggesting Tibber
+re-validates the inverter identity every hour. This is relevant for `fake_inverter_type_code`:
+if you change it after pairing, Tibber will see the new value within ~60 minutes.
+
+### Inverter Type Code (Register 35000)
+
+This is the value that determines which Solis inverter model Tibber recognizes.
+It is configurable via the `fake_inverter_type_code` option (v0.6.0+).
+
+| Code | Category | Phase | Voltage | Models | Tibber status |
+|---|---|---|---|---|---|
+| **1010** | String inverter | 1-phase | — | S5-GC, S6-GR1P | Not expected to work |
+| **1020** | String inverter | 3-phase | — | S5-GR3P, S6-GR3P | Not expected to work |
+| **2030** | LV Hybrid | 1-phase | LV | S6-EH1P | ✅ **Verified with Tibber** |
+| **2031** | LV AC-coupled | 1-phase | LV | S6-AC1P | Untested |
+| **2040** | HV Hybrid | 1-phase | HV | S5-EH1P, S6-EH1P-HV | Untested |
+| **2050** | LV Hybrid | 3-phase | LV | S6-EH3P | Untested |
+| **2060** | HV Hybrid | 3-phase | HV | S5-EH3P HV | Untested |
+
+> **Only type code 2030 is confirmed to work with Tibber Bridge.** Other codes
+> are included based on Solis Modbus documentation. If you test another code
+> successfully, please open an issue to update this table.
+
+### Model String vs. Type Code
+
+Registers 33004–33018 contain a 30-byte ASCII string (model + serial). This is
+**independent** of register 35000 (type code). Based on empirical observation:
+
+- **Register 35000** (type code) is likely used by Tibber for **model validation** — this
+  is the value that determines whether Tibber accepts the inverter during pairing.
+- **Registers 33004–33018** (ASCII string) are likely **cosmetic display** — shown in
+  Tibber's inverter info view but not used for protocol compatibility decisions.
+
+A mismatch (e.g., type_code=2050 but model_string="Solis S6-EH1P") will probably
+show wrong info in Tibber's app view but not cause functional problems. There is no
+auto-sync between these two values — update `fake_inverter_model` manually if you
+change `fake_inverter_type_code`.
 
 ## One-Time Holding Registers (FC3) — Read at Initial Connection
 
@@ -83,3 +116,31 @@ The addon permanently returns 0 for all battery registers. This tells Tibber tha
 there is no battery (SoC = 0%, power = 0W, direction = idle).
 
 When Tibber asks "What is your battery capacity?", enter **0** to indicate no battery.
+
+## Function Codes FC17 and FC43 — Implemented but Never Observed
+
+The addon implements two additional Modbus function codes:
+
+| FC | Name | Implementation | Tibber observations |
+|---|---|---|---|
+| **FC17** | Report Server ID | Returns vendor/model ASCII string | **0 reads in 26h of operation** |
+| **FC43** | Read Device Identification | Returns structured vendor/model/serial objects | **0 reads in 26h of operation** |
+
+Neither FC17 nor FC43 was ever called by Tibber Bridge during 26+ hours of
+continuous operation, including initial discovery and pairing.
+
+**Why are they implemented?**
+
+They were included as *defensive coding* during development, based on the Modbus
+specification and the assumption that Tibber might use them for device identification.
+This turned out to be incorrect — Tibber uses FC4 register reads for all identification
+(registers 33004–33018 and 35000).
+
+**For contributors:** FC17 and FC43 can safely be considered non-critical. They are
+retained because:
+1. They add robustness if future Tibber Bridge firmware versions adopt them
+2. Removal would make the addon non-standard Modbus
+3. They add negligible code complexity
+
+If you are debugging a Tibber connection issue, focus on register 35000 (type code)
+and the FC4 data registers — not on FC17 or FC43.
