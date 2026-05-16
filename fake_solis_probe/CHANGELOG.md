@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.5.0] - 2026-05-16
+
+### Fixed
+- Daily energy register no longer freezes at previous day's value when
+  Solis inverter goes offline at night. This previously caused Tibber
+  to display incorrect "production" values during nighttime hours
+  (Tibber Bridge interprets daily energy register as a power indicator
+  for hourly aggregation).
+
+### Added
+- Per-sensor `*_unavailable_behavior` options (`zero` | `last_known`)
+- Explicit `register_fallback` log event with consecutive error counts
+  and written value, using same backoff as `sensor_unavailable`
+- Safe defaults: PV power → zero, grid power → zero,
+  total energy → last_known (cumulative), daily energy → zero
+
+### Notes
+- Fix for a problem observed during the first 24-hour production test,
+  where Tibber displayed ~740 W of phantom production during the night,
+  corresponding to the previous day's energy_today value
+  (74.0 kWh × scale 10 = 740). Time-weighted averaging of hourly Tibber
+  values matched this hypothesis exactly: 04:00 = 539 W (mix of 74 kWh
+  and 0 kWh after 04:43 recovery), 05:00 = 128 W (real PV ramp-up).
+
 ## [0.4.0] — 2026-05-15
 
 ### Changed

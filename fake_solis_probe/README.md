@@ -117,11 +117,20 @@ With **Watchdog** enabled, HA will keep retrying — fix the config and the addo
 
 ## Error Handling During Operation
 
-If a sensor returns `unavailable`, `unknown`, or an API error during polling:
+If a sensor returns `unavailable`, `unknown`, or an API error during polling,
+the behavior is controlled per sensor by the `*_unavailable_behavior` options:
 
-- **Last known value is kept** and continues to be served to Tibber
-- If no value was ever read: register returns **0**
-- Errors are logged with **backoff** (first occurrence + every ~60 seconds), not every 5-second cycle
+| Option | Default | Effect when sensor is unavailable |
+|---|---|---|
+| `pv_power_unavailable_behavior` | `zero` | Writes 0 W to register — correct at night |
+| `grid_power_unavailable_behavior` | `zero` | Writes 0 W — safe neutral value |
+| `total_energy_unavailable_behavior` | `last_known` | Keeps last value — cumulative, can't decrease |
+| `daily_energy_unavailable_behavior` | `zero` | Writes 0 — prevents phantom production in Tibber |
+
+- Each fallback is logged as a `register_fallback` event in `events.jsonl`
+  with `entity_id`, `behavior`, `written_value`, and `consecutive_errors`
+- Fallback events use the same **backoff** as `sensor_unavailable`
+  (first occurrence + every ~60 seconds), not every 5-second poll cycle
 
 ## Logs
 

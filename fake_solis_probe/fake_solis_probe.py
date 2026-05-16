@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fake Solis Probe for Home Assistant OS — v0.4.0.
+"""Fake Solis Probe for Home Assistant OS — v0.5.0.
 
 Emulates a Solis S6-EH1P hybrid inverter via Modbus TCP on port 502.
 Reads real PV data from configurable Home Assistant sensors via Supervisor API
@@ -27,7 +27,7 @@ EVENT_DIR = "/share/fake_solis_probe"
 EVENT_LOG = os.path.join(EVENT_DIR, "events.jsonl")
 REGISTER_FILE = os.path.join(EVENT_DIR, "registers.json")
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 DEFAULT_OPTIONS: Dict[str, Any] = {
     "enable_http": False,
@@ -42,6 +42,10 @@ DEFAULT_OPTIONS: Dict[str, Any] = {
     "grid_power_scale": 1.0,
     "total_energy_scale": 10.0,
     "daily_energy_scale": 10.0,
+    "pv_power_unavailable_behavior": "zero",
+    "grid_power_unavailable_behavior": "zero",
+    "total_energy_unavailable_behavior": "last_known",
+    "daily_energy_unavailable_behavior": "zero",
     "fake_vendor": "Ginlong",
     "fake_inverter_model": "Solis S6-EH1P",
     "fake_logger_model": "S2-WL-ST",
@@ -63,6 +67,9 @@ CACHE_LOCK = threading.Lock()
 # Error backoff tracking: entity_id -> consecutive_error_count
 SENSOR_ERROR_COUNT: Dict[str, int] = {}
 ERROR_LOG_INTERVAL = 12  # Only log errors every 12th consecutive failure (~60s)
+
+# Fallback logging backoff: (entity_id, behavior) -> consecutive_fallback_count
+FALLBACK_LOG_COUNT: Dict[str, int] = {}
 
 LOG_LOCK = threading.Lock()
 REG_LOCK = threading.Lock()
@@ -230,35 +237,98 @@ def _to_s32_pair(value: int) -> Tuple[int, int]:
     value = value & 0xFFFFFFFF
     return (value >> 16) & 0xFFFF, value & 0xFFFF
 
+def _apply_behavior(
+    entity_id: str,
+    raw: Optional[float],
+    behavior: str,
+    scale: float,
+    error_count: int,
+) -> Optional[float]:
+    """Apply unavailable_behavior when raw is None.
+
+    Returns:
+        float — scaled value to write to register
+        None  — 'last_known': leave register unchanged
+    """
+    if raw is not None:
+        return raw * scale
+    # Sensor is unavailable
+    if behavior == "zero":
+        written = 0.0
+    else:  # last_known
+        written = None
+    # Log with backoff (same rhythm as sensor_unavailable)
+    key = f"{entity_id}:{behavior}"
+    count = FALLBACK_LOG_COUNT.get(key, 0) + 1
+    FALLBACK_LOG_COUNT[key] = count
+    if count == 1 or count % ERROR_LOG_INTERVAL == 0:
+        log_event(
+            "register_fallback",
+            entity_id=entity_id,
+            behavior=behavior,
+            written_value=written,
+            consecutive_errors=error_count,
+        )
+    return written
+
+def _reset_fallback_count(entity_id: str, behavior: str) -> None:
+    """Reset fallback backoff counter when sensor recovers."""
+    key = f"{entity_id}:{behavior}"
+    FALLBACK_LOG_COUNT.pop(key, None)
+
 def update_live_registers() -> None:
     """Push cached HA sensor values into the Modbus register map."""
-    pv_entity = str(OPTIONS.get("ha_sensor_pv_power", ""))
-    grid_entity = str(OPTIONS.get("ha_sensor_grid_power", ""))
+    pv_entity    = str(OPTIONS.get("ha_sensor_pv_power", ""))
+    grid_entity  = str(OPTIONS.get("ha_sensor_grid_power", ""))
     total_entity = str(OPTIONS.get("ha_sensor_total_energy", ""))
     daily_entity = str(OPTIONS.get("ha_sensor_daily_energy", ""))
 
-    sign_conv = str(OPTIONS.get("grid_power_sign_convention", "negate"))
-    pv_scale = float(OPTIONS.get("pv_power_scale", 1.0))
-    grid_scale = float(OPTIONS.get("grid_power_scale", 1.0))
+    sign_conv   = str(OPTIONS.get("grid_power_sign_convention", "negate"))
+    pv_scale    = float(OPTIONS.get("pv_power_scale", 1.0))
+    grid_scale  = float(OPTIONS.get("grid_power_scale", 1.0))
     total_scale = float(OPTIONS.get("total_energy_scale", 10.0))
     daily_scale = float(OPTIONS.get("daily_energy_scale", 10.0))
 
+    pv_behavior    = str(OPTIONS.get("pv_power_unavailable_behavior", "zero"))
+    grid_behavior  = str(OPTIONS.get("grid_power_unavailable_behavior", "zero"))
+    total_behavior = str(OPTIONS.get("total_energy_unavailable_behavior", "last_known"))
+    daily_behavior = str(OPTIONS.get("daily_energy_unavailable_behavior", "zero"))
+
     with CACHE_LOCK:
-        pv_raw = SENSOR_CACHE.get(pv_entity)
-        grid_raw = SENSOR_CACHE.get(grid_entity)
+        pv_raw    = SENSOR_CACHE.get(pv_entity)
+        grid_raw  = SENSOR_CACHE.get(grid_entity)
         total_raw = SENSOR_CACHE.get(total_entity)
         daily_raw = SENSOR_CACHE.get(daily_entity)
 
+    # Resolve error counts for backoff logging
+    pv_errs    = SENSOR_ERROR_COUNT.get(pv_entity, 0)
+    grid_errs  = SENSOR_ERROR_COUNT.get(grid_entity, 0)
+    total_errs = SENSOR_ERROR_COUNT.get(total_entity, 0)
+    daily_errs = SENSOR_ERROR_COUNT.get(daily_entity, 0)
+
+    # Reset fallback counters for recovered sensors
+    if pv_raw    is not None: _reset_fallback_count(pv_entity,    pv_behavior)
+    if grid_raw  is not None: _reset_fallback_count(grid_entity,  grid_behavior)
+    if total_raw is not None: _reset_fallback_count(total_entity, total_behavior)
+    if daily_raw is not None: _reset_fallback_count(daily_entity, daily_behavior)
+
+    pv_val    = _apply_behavior(pv_entity,    pv_raw,    pv_behavior,    pv_scale,    pv_errs)
+    total_val = _apply_behavior(total_entity, total_raw, total_behavior, total_scale, total_errs)
+    daily_val = _apply_behavior(daily_entity, daily_raw, daily_behavior, daily_scale, daily_errs)
+
+    # Grid: apply scale+behavior first, then sign convention on the resolved float
+    grid_val_raw = _apply_behavior(grid_entity, grid_raw, grid_behavior, grid_scale, grid_errs)
+
     with REG_LOCK:
         # 33057-33058: PV Active Power (U32, W)
-        if pv_raw is not None:
-            hi, lo = _to_u32_pair(int(pv_raw * pv_scale))
+        if pv_val is not None:
+            hi, lo = _to_u32_pair(int(pv_val))
             REGS[33057] = hi
             REGS[33058] = lo
 
         # 33263-33264: Grid Import/Export Power (S32, W)
-        if grid_raw is not None:
-            grid_w = int(grid_raw * grid_scale)
+        if grid_val_raw is not None:
+            grid_w = int(grid_val_raw)
             if sign_conv == "negate":
                 grid_w = -grid_w
             hi, lo = _to_s32_pair(grid_w)
@@ -266,15 +336,15 @@ def update_live_registers() -> None:
             REGS[33264] = lo
 
         # 34391-34393: Total Energy (U32 in scaled units + trailing U16)
-        if total_raw is not None:
-            hi, lo = _to_u32_pair(int(total_raw * total_scale))
+        if total_val is not None:
+            hi, lo = _to_u32_pair(int(total_val))
             REGS[34391] = hi
             REGS[34392] = lo
             REGS[34393] = 0
 
         # 34621-34622: Daily Energy (U32 in scaled units)
-        if daily_raw is not None:
-            hi, lo = _to_u32_pair(int(daily_raw * daily_scale))
+        if daily_val is not None:
+            hi, lo = _to_u32_pair(int(daily_val))
             REGS[34621] = hi
             REGS[34622] = lo
 

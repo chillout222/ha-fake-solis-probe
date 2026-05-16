@@ -1,5 +1,5 @@
 name: "Fake Solis Probe"
-version: "0.4.0"
+version: "0.5.0"
 slug: "fake_solis_probe"
 description: "Emulates a Solis S6-EH1P hybrid inverter via Modbus TCP so Tibber Bridge can read PV data"
 arch:
@@ -37,6 +37,10 @@ options:
   grid_power_scale: 1.0
   total_energy_scale: 10.0
   daily_energy_scale: 10.0
+  pv_power_unavailable_behavior: "zero"
+  grid_power_unavailable_behavior: "zero"
+  total_energy_unavailable_behavior: "last_known"
+  daily_energy_unavailable_behavior: "zero"
   fake_vendor: "Ginlong"
   fake_inverter_model: "Solis S6-EH1P"
   fake_logger_model: "S2-WL-ST"
@@ -55,6 +59,10 @@ schema:
   grid_power_scale: float
   total_energy_scale: float
   daily_energy_scale: float
+  pv_power_unavailable_behavior: list(zero|last_known)
+  grid_power_unavailable_behavior: list(zero|last_known)
+  total_energy_unavailable_behavior: list(zero|last_known)
+  daily_energy_unavailable_behavior: list(zero|last_known)
   fake_vendor: str
   fake_inverter_model: str
   fake_logger_model: str
