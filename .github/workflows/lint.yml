@@ -1,4 +1,4 @@
-name: Lint
+ame: Lint
 
 on:
   push:
@@ -24,4 +24,6 @@ jobs:
         run: yamllint -d relaxed .
 
       - name: Check Python syntax
-        run: python -m py_compile fake_solis_probe/fake_solis_probe.py && echo "Python syntax OK"
+        run: |
+          python -m py_compile fake_solis_probe/fake_solis_probe.py
+          echo "Python syntax OK"
