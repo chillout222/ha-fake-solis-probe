@@ -1,4 +1,4 @@
-ame: Lint
+name: Lint
 
 on:
   push:
