@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.5.1] - 2026-05-17
+
+### Fixed
+- **Phantom production bug not fully resolved by v0.5.0** — root cause identified
+  and fixed: `SENSOR_CACHE` was never set to `None` when a sensor became unavailable.
+  The stale last-known value remained in the cache (e.g. `energy_today = 30.6`),
+  causing `_apply_behavior()` to receive a non-None `raw` value and skip the
+  configured fallback entirely. The `zero` behavior for `daily_energy` therefore
+  never wrote 0 to the register. Result: Tibber continued displaying ~306 W phantom
+  production (30.6 kWh × scale 10 = 306 units ≈ 306 W).
+
+### Changed
+- **`SENSOR_CACHE`** now explicitly set to `None` on every failed poll, correctly
+  signalling "unavailable" to `_apply_behavior()`.
+- **`LAST_KNOWN_CACHE`** added as a separate dict to retain the last successful
+  numeric reading across unavailable periods. Updated atomically with `SENSOR_CACHE`
+  under `CACHE_LOCK` on every successful poll.
+- **`_apply_behavior()`** gains a `last_known_val` parameter (from `LAST_KNOWN_CACHE`)
+  which is included in `register_fallback` log events for better diagnostics.
+- **`sensor_unavailable`** log event field renamed from `using_last_value` to
+  `last_known_value` for consistency with `register_fallback`.
+
+### Added
+- `fake_solis_probe/tests/test_behavior.py` — standalone regression test suite
+  verifying the fixed cache behaviour, correct register output for `zero`/`last_known`
+  behaviors, and the v0.5.0 stale-value bug path.
+
+### Notes
+- Second night verification showed ~306 W phantom production (30.6 kWh × 10),
+  confirming the v0.5.0 fix was incomplete. Time-weighted Tibber hourly values
+  23:00–03:00 = 306 W exactly matched `energy_today` × scale.
+- `register_fallback` events were 0 in the v0.5.0 night log, which was the
+  diagnostic key: `_apply_behavior` was never called with `raw=None`.
+
 ## [0.5.0] - 2026-05-16
 
 ### Fixed

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fake Solis Probe for Home Assistant OS — v0.5.0.
+"""Fake Solis Probe for Home Assistant OS — v0.5.1.
 
 Emulates a Solis S6-EH1P hybrid inverter via Modbus TCP on port 502.
 Reads real PV data from configurable Home Assistant sensors via Supervisor API
@@ -27,7 +27,7 @@ EVENT_DIR = "/share/fake_solis_probe"
 EVENT_LOG = os.path.join(EVENT_DIR, "events.jsonl")
 REGISTER_FILE = os.path.join(EVENT_DIR, "registers.json")
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 
 DEFAULT_OPTIONS: Dict[str, Any] = {
     "enable_http": False,
@@ -60,8 +60,14 @@ SENSOR_KEYS = [
     "ha_sensor_daily_energy",
 ]
 
-# Cache for HA sensor values (updated by background thread)
+# Current sensor reading — explicitly None when sensor is unavailable/unknown/error.
+# This is what _apply_behavior receives as 'raw'. Set to None on every failed poll.
 SENSOR_CACHE: Dict[str, Optional[float]] = {}
+
+# Last successful numeric reading per entity.
+# Retained across unavailable periods; used by 'last_known' behavior logging.
+LAST_KNOWN_CACHE: Dict[str, Optional[float]] = {}
+
 CACHE_LOCK = threading.Lock()
 
 # Error backoff tracking: entity_id -> consecutive_error_count
@@ -243,21 +249,33 @@ def _apply_behavior(
     behavior: str,
     scale: float,
     error_count: int,
+    last_known_val: Optional[float] = None,
 ) -> Optional[float]:
     """Apply unavailable_behavior when raw is None.
 
+    Args:
+        raw:            Current sensor reading from SENSOR_CACHE.
+                        Must be None when sensor is unavailable — callers are
+                        responsible for setting SENSOR_CACHE[entity] = None
+                        on failed polls (v0.5.1 fix).
+        last_known_val: Last successful reading from LAST_KNOWN_CACHE.
+                        Used only for logging; not used to compute the return value.
+
     Returns:
-        float — scaled value to write to register
-        None  — 'last_known': leave register unchanged
+        float — scaled value to write into the Modbus register.
+        None  — behavior='last_known': do NOT overwrite the register. The
+                register retains whatever was written on the last successful
+                poll. This is intentional for cumulative values (total_energy)
+                that must never decrease or be zeroed.
     """
     if raw is not None:
         return raw * scale
-    # Sensor is unavailable
+    # Sensor is unavailable — apply configured fallback
     if behavior == "zero":
-        written = 0.0
-    else:  # last_known
-        written = None
-    # Log with backoff (same rhythm as sensor_unavailable)
+        written_value: Optional[float] = 0.0
+    else:  # last_known — leave register unchanged
+        written_value = None
+    # Log with backoff (same interval as sensor_unavailable: every ~60 s)
     key = f"{entity_id}:{behavior}"
     count = FALLBACK_LOG_COUNT.get(key, 0) + 1
     FALLBACK_LOG_COUNT[key] = count
@@ -266,10 +284,11 @@ def _apply_behavior(
             "register_fallback",
             entity_id=entity_id,
             behavior=behavior,
-            written_value=written,
+            written_value=written_value,
+            last_known_value=last_known_val,
             consecutive_errors=error_count,
         )
-    return written
+    return written_value
 
 def _reset_fallback_count(entity_id: str, behavior: str) -> None:
     """Reset fallback backoff counter when sensor recovers."""
@@ -295,10 +314,16 @@ def update_live_registers() -> None:
     daily_behavior = str(OPTIONS.get("daily_energy_unavailable_behavior", "zero"))
 
     with CACHE_LOCK:
+        # Current readings — None when sensor is unavailable
         pv_raw    = SENSOR_CACHE.get(pv_entity)
         grid_raw  = SENSOR_CACHE.get(grid_entity)
         total_raw = SENSOR_CACHE.get(total_entity)
         daily_raw = SENSOR_CACHE.get(daily_entity)
+        # Last known values — retained across unavailable periods
+        pv_lk    = LAST_KNOWN_CACHE.get(pv_entity)
+        grid_lk  = LAST_KNOWN_CACHE.get(grid_entity)
+        total_lk = LAST_KNOWN_CACHE.get(total_entity)
+        daily_lk = LAST_KNOWN_CACHE.get(daily_entity)
 
     # Resolve error counts for backoff logging
     pv_errs    = SENSOR_ERROR_COUNT.get(pv_entity, 0)
@@ -306,18 +331,18 @@ def update_live_registers() -> None:
     total_errs = SENSOR_ERROR_COUNT.get(total_entity, 0)
     daily_errs = SENSOR_ERROR_COUNT.get(daily_entity, 0)
 
-    # Reset fallback counters for recovered sensors
+    # Reset fallback counters for sensors that have recovered
     if pv_raw    is not None: _reset_fallback_count(pv_entity,    pv_behavior)
     if grid_raw  is not None: _reset_fallback_count(grid_entity,  grid_behavior)
     if total_raw is not None: _reset_fallback_count(total_entity, total_behavior)
     if daily_raw is not None: _reset_fallback_count(daily_entity, daily_behavior)
 
-    pv_val    = _apply_behavior(pv_entity,    pv_raw,    pv_behavior,    pv_scale,    pv_errs)
-    total_val = _apply_behavior(total_entity, total_raw, total_behavior, total_scale, total_errs)
-    daily_val = _apply_behavior(daily_entity, daily_raw, daily_behavior, daily_scale, daily_errs)
+    pv_val    = _apply_behavior(pv_entity,    pv_raw,    pv_behavior,    pv_scale,    pv_errs,    pv_lk)
+    total_val = _apply_behavior(total_entity, total_raw, total_behavior, total_scale, total_errs, total_lk)
+    daily_val = _apply_behavior(daily_entity, daily_raw, daily_behavior, daily_scale, daily_errs, daily_lk)
 
     # Grid: apply scale+behavior first, then sign convention on the resolved float
-    grid_val_raw = _apply_behavior(grid_entity, grid_raw, grid_behavior, grid_scale, grid_errs)
+    grid_val_raw = _apply_behavior(grid_entity, grid_raw, grid_behavior, grid_scale, grid_errs, grid_lk)
 
     with REG_LOCK:
         # 33057-33058: PV Active Power (U32, W)
@@ -632,21 +657,25 @@ def sensor_poll_loop() -> None:
             val = ha_api_get_state(entity_id)
 
             if val is not None:
-                # Success — update cache and reset error count
+                # Success — update both caches under a single lock
                 with CACHE_LOCK:
-                    SENSOR_CACHE[entity_id] = val
+                    SENSOR_CACHE[entity_id] = val        # current reading
+                    LAST_KNOWN_CACHE[entity_id] = val    # retain as last-known
                 SENSOR_ERROR_COUNT[entity_id] = 0
+                # Fallback counters are reset in update_live_registers when raw is not None
             else:
-                # Failed — keep last known value, log with backoff
+                # Failed — mark current reading as None so _apply_behavior
+                # receives raw=None and applies the configured fallback.
+                # LAST_KNOWN_CACHE is intentionally NOT updated here.
                 count = SENSOR_ERROR_COUNT.get(entity_id, 0) + 1
                 SENSOR_ERROR_COUNT[entity_id] = count
+                with CACHE_LOCK:
+                    SENSOR_CACHE[entity_id] = None           # v0.5.1 fix
+                    last = LAST_KNOWN_CACHE.get(entity_id)   # read from correct dict
                 if count == 1 or count % ERROR_LOG_INTERVAL == 0:
-                    with CACHE_LOCK:
-                        last = SENSOR_CACHE.get(entity_id)
                     log_event("sensor_unavailable", entity_id=entity_id,
                               consecutive_errors=count,
-                              using_last_value=last)
-                # Don't update cache — keeps last known value (or None if never read)
+                              last_known_value=last)
 
         update_live_registers()
 
