@@ -1,5 +1,5 @@
 name: "Fake Solis Probe"
-version: "0.5.1"
+version: "0.6.0"
 slug: "fake_solis_probe"
 description: "Emulates a Solis S6-EH1P hybrid inverter via Modbus TCP so Tibber Bridge can read PV data"
 arch:
@@ -45,6 +45,14 @@ options:
   fake_inverter_model: "Solis S6-EH1P"
   fake_logger_model: "S2-WL-ST"
   fake_serial: "S2WLSTFAKE001"
+  # Inverter type code reported in Modbus register 35000.
+  # 2030 = S6-EH1P (1-phase LV hybrid)  — VERIFIED to work with Tibber
+  # 2040 = S5-EH1P / HV hybrid 1-phase  — untested with Tibber
+  # 2050 = S6-EH3P (3-phase LV hybrid)  — untested with Tibber
+  # 2060 = S5-EH3P HV (3-phase HV)      — untested with Tibber
+  # See docs/adapting-for-other-inverters.md for full table.
+  # Note: fake_inverter_model should be updated manually to match.
+  fake_inverter_type_code: 2030
 
 schema:
   enable_http: bool
@@ -67,3 +75,4 @@ schema:
   fake_inverter_model: str
   fake_logger_model: str
   fake_serial: str
+  fake_inverter_type_code: int

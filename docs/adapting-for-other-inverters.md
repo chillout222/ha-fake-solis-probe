@@ -64,22 +64,72 @@ low consumption). If the value is negative → use `negate`. If positive → use
 
 ## Step 4 — Choosing a Solis Inverter Type to Emulate
 
-Register 35000 contains the inverter type code. We use `2030` (S6-EH1P).
-If Tibber adds support for other models in the future, you may want a different code.
+Register 35000 contains the inverter type code that tells Tibber Bridge which
+Solis model it is talking to. From v0.6.0 this is configurable via the
+`fake_inverter_type_code` option in the **Configuration** tab — no file editing needed.
 
-Known codes (community-reported, not officially documented):
+### Known type codes
 
-| Code | Model |
-|---|---|
-| 2030 | S6-EH1P (1-phase hybrid, tested ✅) |
-| Others | Unknown — test empirically |
+| Code | Category | Phase | Battery voltage | Typical models | Tibber status |
+|---|---|---|---|---|---|
+| **2030** | LV Hybrid | 1-phase | LV | S6-EH1P | ✅ **Verified** |
+| **2031** | LV AC-coupled | 1-phase | LV | S6-AC1P | Untested |
+| **2040** | HV Hybrid | 1-phase | HV | S5-EH1P, S6-EH1P-HV | Untested |
+| **2050** | LV Hybrid | 3-phase | LV | S6-EH3P | ⚠️ Smoke-tested (experimental) |
+| **2060** | HV Hybrid | 3-phase | HV | S5-EH3P HV | Untested |
 
-To change it, edit `/share/fake_solis_probe/registers.json`:
-```json
-{
-  "35000": 2030
-}
+> **Only type code 2030 is fully verified with Tibber Bridge.**
+> Type code 2050 has been smoke-tested (Modbus + Tibber app) in one installation
+> with no errors observed, but is not considered long-term verified.
+> 2040 and 2060 are untested. If you test any code successfully, please open a
+> GitHub issue to update this table.
+
+### Recommended settings by installation type
+
+**1-phase hybrid (default):**
 ```
+fake_inverter_type_code: 2030
+fake_inverter_model: Solis S6-EH1P
+```
+
+**3-phase hybrid (smoke-tested in one installation — experimental):**
+```
+fake_inverter_type_code: 2050
+fake_inverter_model: Solis S6-EH3P
+```
+> ⚠️ Tibber Bridge connected and Tibber app opened normally in one test.
+> Not long-term verified. Monitor your Tibber integration after changing.
+
+### Model string vs. type code
+
+`fake_inverter_model` (register 33004–33018) and `fake_inverter_type_code`
+(register 35000) are **independent**. Tibber reads both roughly once per hour.
+
+- **Type code** determines whether Tibber accepts the inverter (validation)
+- **Model string** is likely cosmetic display in the Tibber app
+
+There is no auto-sync between them. If you change `fake_inverter_type_code`,
+update `fake_inverter_model` manually to match.
+
+### Register 35000 priority
+
+**At startup:** `fake_inverter_type_code` is written to register 35000 **after**
+registers.json is loaded. This means the config option wins at startup, even if
+registers.json contains a `"35000"` key.
+
+**During runtime (hot-reload):** The addon monitors registers.json for file changes.
+If you edit registers.json while the addon is running and add or change a `"35000"` key,
+that value will be picked up on the next Modbus poll (within 10 seconds) and will
+override the startup value for the remainder of that session.
+
+**Recommendation:** Do not set `"35000"` in registers.json unless you specifically
+want hot-reload override behavior. Use `fake_inverter_type_code` in the Configuration
+tab instead — it is the intended control surface.
+
+> **Note on config.yaml comments:** The `#`-comments in config.yaml are not shown
+> in the HA Configuration tab. The UI only displays option names and their values.
+> Refer to this document and the README for option descriptions.
+
 
 ## Step 5 — Using Probe Mode to Debug
 

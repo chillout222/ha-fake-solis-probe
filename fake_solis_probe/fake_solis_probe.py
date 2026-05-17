@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fake Solis Probe for Home Assistant OS — v0.5.1.
+"""Fake Solis Probe for Home Assistant OS — v0.6.0.
 
 Emulates a Solis S6-EH1P hybrid inverter via Modbus TCP on port 502.
 Reads real PV data from configurable Home Assistant sensors via Supervisor API
@@ -27,7 +27,7 @@ EVENT_DIR = "/share/fake_solis_probe"
 EVENT_LOG = os.path.join(EVENT_DIR, "events.jsonl")
 REGISTER_FILE = os.path.join(EVENT_DIR, "registers.json")
 
-VERSION = "0.5.1"
+VERSION = "0.6.0"
 
 DEFAULT_OPTIONS: Dict[str, Any] = {
     "enable_http": False,
@@ -50,6 +50,7 @@ DEFAULT_OPTIONS: Dict[str, Any] = {
     "fake_inverter_model": "Solis S6-EH1P",
     "fake_logger_model": "S2-WL-ST",
     "fake_serial": "S2WLSTFAKE001",
+    "fake_inverter_type_code": 2030,
 }
 
 # Sensor config keys (mapped to register blocks)
@@ -712,6 +713,16 @@ def main() -> int:
     os.makedirs(EVENT_DIR, exist_ok=True)
     log_event("probe_start", version=VERSION, options={k: v for k, v in OPTIONS.items()})
     load_register_file_if_changed()
+
+    # Write inverter type code from config into register 35000.
+    # This runs AFTER load_register_file_if_changed(), so the config option
+    # takes priority over any "35000" key in registers.json at startup.
+    # Note: registers.json hot-reload during runtime (via get_reg) CAN override
+    # this value if "35000" is present in the file — see docs for details.
+    type_code = int(OPTIONS.get("fake_inverter_type_code", 2030))
+    with REG_LOCK:
+        REGS[35000] = type_code & 0xFFFF
+    log_event("inverter_type_code_set", register=35000, value=type_code)
 
     # Validate configuration before starting
     if not validate_config():
