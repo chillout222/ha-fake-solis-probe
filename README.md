@@ -3,7 +3,7 @@
 **Makes Tibber Bridge work with non-hybrid Solis inverters by emulating a Solis S6-EH1P over Modbus TCP.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/addon%20version-0.4.0-blue)](fake_solis_probe/CHANGELOG.md)
+[![Version](https://img.shields.io/badge/addon%20version-0.6.0-blue)](fake_solis_probe/CHANGELOG.md)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-HAOS%20Addon-41BDF5?logo=home-assistant)](https://www.home-assistant.io/)
 ![Status: Experimental](https://img.shields.io/badge/status-experimental-orange)
 
@@ -142,6 +142,22 @@ value at that moment — if it's negative, use `negate`. If positive, use `direc
 | `fake_vendor` | `Ginlong` | Vendor string returned in Modbus Device ID |
 | `fake_inverter_model` | `Solis S6-EH1P` | Model string returned in Modbus Device ID |
 | `fake_serial` | `S2WLSTFAKE001` | Serial number returned in Modbus Device ID |
+| `fake_inverter_type_code` | `2030` | Inverter type code in register 35000 — see table below |
+
+### Inverter type code
+
+> **Note:** The emulated inverter type defaults to S6-EH1P (1-phase hybrid, type code 2030).
+> Only `2030` is fully verified to work with Tibber Bridge long-term.
+> Type code `2050` has been smoke-tested (Modbus + Tibber app) in one installation
+> but is not long-term verified. Other codes are untested.
+> See [docs/adapting-for-other-inverters.md](docs/adapting-for-other-inverters.md).
+
+| Code | Model | Phase | Tibber status |
+|---|---|---|---|
+| `2030` | S6-EH1P | 1-phase LV | ✅ Verified |
+| `2040` | S5-EH1P HV | 1-phase HV | Untested |
+| `2050` | S6-EH3P | 3-phase LV | ⚠️ Smoke-tested (experimental) |
+| `2060` | S5-EH3P HV | 3-phase HV | Untested |
 
 ---
 
