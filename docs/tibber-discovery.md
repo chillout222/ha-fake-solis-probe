@@ -21,18 +21,28 @@ Bridge on the same LAN segment.
 Tibber reads register 35000 (FC4, 1 register):
 
 ```
-FC4, start=35000, qty=1 → returns 2030 (0x07EE)
+FC4, start=35000, qty=1 → returns configured type code
+
+Default:      2030 (0x07EE) — S6-EH1P   ✅ verified
+Experimental: 2050 (0x0802) — S6-EH3P   ⚠️ smoke-tested
 ```
 
-Value `2030` identifies the inverter as **Solis S6-EH1P**.
+The returned value identifies the inverter model to Tibber Bridge.
 If Tibber does not recognize the type code, it will not proceed.
+
+> **Default `fake_inverter_type_code: 2030` is the only fully verified value.**
+> Type code 2050 was smoke-tested (Bridge connected, app opened) in one installation
+> but is not long-term verified. Use 2030 unless you are deliberately experimenting.
 
 Tibber then reads registers 33004–33018 (FC4, 15 registers) to get the model/serial
 ASCII string.
 
 ### Phase 3 — App Confirmation
 
-The Tibber app shows: *"Found your inverter — Solis S6-EH1P"*
+The Tibber app shows the identified model, e.g.:
+- **Default (2030):** *"Found your inverter — Solis S6-EH1P"*
+- **Experimental (2050):** Model display may differ — app behavior observed as normal
+  in one smoke test, but not verified across Tibber app versions.
 
 The app then asks: **"Confirm battery capacity"**
 
@@ -68,6 +78,7 @@ Tibber Bridge enters continuous polling mode:
 | Observation | Status |
 |---|---|
 | Tibber accepts type code 2030 (S6-EH1P) | ✅ Verified |
+| Tibber Bridge connects with type code 2050 (S6-EH3P) | ⚠️ Smoke-tested (one installation, not long-term verified) |
 | Tibber polls every ~10 seconds | ✅ Verified |
 | Tibber holds persistent TCP connection | ✅ Verified (no reconnects observed over hours) |
 | Tibber makes no write requests (FC6/FC16) | ✅ Verified (read-only confirmed) |

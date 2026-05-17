@@ -75,12 +75,14 @@ It is configurable via the `fake_inverter_type_code` option (v0.6.0+).
 | **2030** | LV Hybrid | 1-phase | LV | S6-EH1P | ✅ **Verified with Tibber** |
 | **2031** | LV AC-coupled | 1-phase | LV | S6-AC1P | Untested |
 | **2040** | HV Hybrid | 1-phase | HV | S5-EH1P, S6-EH1P-HV | Untested |
-| **2050** | LV Hybrid | 3-phase | LV | S6-EH3P | Untested |
+| **2050** | LV Hybrid | 3-phase | LV | S6-EH3P | ⚠️ Smoke-tested (experimental) |
 | **2060** | HV Hybrid | 3-phase | HV | S5-EH3P HV | Untested |
 
-> **Only type code 2030 is confirmed to work with Tibber Bridge.** Other codes
-> are included based on Solis Modbus documentation. If you test another code
-> successfully, please open an issue to update this table.
+> **Default and verified: type code 2030 (S6-EH1P).** Use this unless you have a
+> specific reason to experiment with another code.
+> Type code 2050 (S6-EH3P) has been smoke-tested — Tibber Bridge connected and
+> Tibber app opened normally in one installation — but is not long-term verified.
+> 2040 and 2060 are untested. If you test a code successfully, open an issue.
 
 ### Model String vs. Type Code
 
@@ -91,6 +93,20 @@ Registers 33004–33018 contain a 30-byte ASCII string (model + serial). This is
   is the value that determines whether Tibber accepts the inverter during pairing.
 - **Registers 33004–33018** (ASCII string) are likely **cosmetic display** — shown in
   Tibber's inverter info view but not used for protocol compatibility decisions.
+
+**Default configuration (verified):**
+```
+fake_inverter_type_code: 2030   → register 35000 = 0x07EE
+fake_inverter_model: Solis S6-EH1P  → registers 33004-33018 = ASCII "Solis S6-EH1P\x00...S2WLSTFAKE001"
+```
+
+**Experimental 3-phase configuration (smoke-tested, not long-term verified):**
+```
+fake_inverter_type_code: 2050   → register 35000 = 0x0802
+fake_inverter_model: Solis S6-EH3P  → registers 33004-33018 = ASCII "Solis S6-EH3P\x00...S2WLSTFAKE001"
+```
+> ⚠️ Tibber Bridge connected and Tibber app opened normally in one test with 2050.
+> Not long-term verified. Monitor your Tibber integration after switching.
 
 A mismatch (e.g., type_code=2050 but model_string="Solis S6-EH1P") will probably
 show wrong info in Tibber's app view but not cause functional problems. There is no
