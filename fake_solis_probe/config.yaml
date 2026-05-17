@@ -1,5 +1,5 @@
 name: "Fake Solis Probe"
-version: "0.5.0"
+version: "0.5.1"
 slug: "fake_solis_probe"
 description: "Emulates a Solis S6-EH1P hybrid inverter via Modbus TCP so Tibber Bridge can read PV data"
 arch:
