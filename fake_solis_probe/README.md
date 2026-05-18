@@ -66,6 +66,8 @@ After installing, go to **Configuration** tab and set your sensor entity IDs:
 | `fake_inverter_model` | `Solis S6-EH1P` | Model in Device ID response |
 | `fake_logger_model` | `S2-WL-ST` | Logger model in Device ID |
 | `fake_serial` | `S2WLSTFAKE001` | Serial number in Device ID |
+| `log_max_bytes` | `5242880` | Rotate `events.jsonl` at this size (bytes). `0` = disabled. |
+| `log_backup_count` | `3` | Backup files to keep (`.1`, `.2`, …). `<= 0` = truncate, no backups. |
 
 ## Register Mapping
 
@@ -148,6 +150,28 @@ the behavior is controlled per sensor by the `*_unavailable_behavior` options:
 3. Click **Save** then **Restart**
 
 Now every Modbus request/response is logged as raw hex in `events.jsonl`.
+
+### Log rotation
+
+By default `events.jsonl` is rotated when it reaches **5 MB** and up to **3**
+backup files are kept — giving a maximum of ~20 MB on disk.
+
+| Option | Default | Effect |
+|---|---|---|
+| `log_max_bytes` | `5242880` | File size threshold (bytes). `0` = rotation disabled. |
+| `log_backup_count` | `3` | Backups to keep. `<= 0` = truncate in-place (no `.1` file). |
+
+On rotation, a message like the following appears in the HA add-on log:
+
+```
+[Fake Solis Probe] log rotated: /share/fake_solis_probe/events.jsonl (4987 KiB) → .1  (backup_count=3)
+```
+
+Backup files are plain JSONL and can be inspected directly:
+
+```sh
+ssh root@<HA-IP> cat /share/fake_solis_probe/events.jsonl.1 | jq .
+```
 
 ## Dependencies
 

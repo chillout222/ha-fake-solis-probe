@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.7.0] - 2026-05-18
+
+### Added
+- **Log rotation for `events.jsonl`** — prevents unbounded file growth on the
+  host volume.
+  - `log_max_bytes` (default `5242880` = 5 MB): rotate when the file exceeds
+    this size. Set to `0` to disable rotation entirely.
+  - `log_backup_count` (default `3`): number of backup files to keep
+    (`.1`, `.2`, `.3`). Set to `0` to truncate in-place with no backups.
+  - Maximum on-disk usage: `log_max_bytes × (log_backup_count + 1)` ≈ 20 MB
+    with defaults.
+  - Rotation runs inside the existing `LOG_LOCK` critical section in
+    `log_event()`, immediately before the new line is appended — so every new
+    event always lands in a fresh `events.jsonl` after rotation.
+  - Rotation failures are printed to stdout but never crash the addon or
+    drop events.
+  - A `[Fake Solis Probe] log rotated: …` message is printed to the HA
+    add-on log on each rotation (not written to `events.jsonl` itself, to
+    avoid a log-about-logging loop).
+- `fake_solis_probe/tests/test_log_rotation.py` — standalone regression test
+  suite (8 tests) using a real temporary directory and real file I/O, covering
+  threshold detection, cascade rename, backup_count=0 truncation,
+  max_bytes=0 disable, and missing-file safety.
+
 ## [0.5.1] - 2026-05-17
 
 ### Fixed

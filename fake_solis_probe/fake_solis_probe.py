@@ -27,7 +27,7 @@ EVENT_DIR = "/share/fake_solis_probe"
 EVENT_LOG = os.path.join(EVENT_DIR, "events.jsonl")
 REGISTER_FILE = os.path.join(EVENT_DIR, "registers.json")
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 
 DEFAULT_OPTIONS: Dict[str, Any] = {
     "enable_http": False,
@@ -51,6 +51,9 @@ DEFAULT_OPTIONS: Dict[str, Any] = {
     "fake_logger_model": "S2-WL-ST",
     "fake_serial": "S2WLSTFAKE001",
     "fake_inverter_type_code": 2030,
+    # Log rotation (v0.7.0)
+    "log_max_bytes": 5 * 1024 * 1024,  # 5 MB — rotate when file exceeds this
+    "log_backup_count": 3,              # number of .1/.2/.3 backups to keep
 }
 
 # Sensor config keys (mapped to register blocks)
@@ -105,6 +108,75 @@ def load_options() -> Dict[str, Any]:
 OPTIONS = load_options()
 
 
+def _rotate_log_if_needed() -> None:
+    """Rotate events.jsonl if it exceeds log_max_bytes.
+
+    Must be called while LOG_LOCK is already held.
+
+    Behaviour:
+        log_max_bytes <= 0               → rotation disabled; return immediately.
+        log_backup_count <= 0            → truncate in-place (no .1 backup kept).
+        log_backup_count >= 1            → cascade rename:
+                                           .N-1 → .N, …, .1 → .2, current → .1
+
+    Rotation failures are printed to stdout but never raise, so log_event()
+    can always continue and attempt to append the new line.
+    """
+    max_bytes = int(OPTIONS.get("log_max_bytes", 5 * 1024 * 1024))
+    backup_count = int(OPTIONS.get("log_backup_count", 3))
+    if max_bytes <= 0:
+        return  # rotation explicitly disabled
+    try:
+        size = os.path.getsize(EVENT_LOG)
+    except FileNotFoundError:
+        return  # file doesn't exist yet — nothing to rotate
+    except Exception:
+        return  # stat error — skip silently, don't crash
+    if size < max_bytes:
+        return  # still within threshold
+    if backup_count <= 0:
+        # Truncate in-place: open in write mode to clear, keep the same path
+        try:
+            with open(EVENT_LOG, "w", encoding="utf-8") as f:
+                pass  # opening in "w" mode truncates the file
+            print(
+                f"[Fake Solis Probe] log truncated: {EVENT_LOG}"
+                f" ({size // 1024} KiB cleared, no backups kept)",
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                f"[Fake Solis Probe] log truncation failed: {exc}",
+                flush=True,
+            )
+        return
+    # Cascade existing backups upward (highest first to avoid clobbering)
+    for n in range(backup_count - 1, 0, -1):
+        src = f"{EVENT_LOG}.{n}"
+        dst = f"{EVENT_LOG}.{n + 1}"
+        try:
+            if os.path.exists(src):
+                os.replace(src, dst)
+        except Exception as exc:
+            print(
+                f"[Fake Solis Probe] log rotation rename {src} -> {dst}: {exc}",
+                flush=True,
+            )
+    # Move the current log to .1
+    try:
+        os.replace(EVENT_LOG, f"{EVENT_LOG}.1")
+        print(
+            f"[Fake Solis Probe] log rotated: {EVENT_LOG}"
+            f" ({size // 1024} KiB) -> .1  (backup_count={backup_count})",
+            flush=True,
+        )
+    except Exception as exc:
+        print(
+            f"[Fake Solis Probe] log rotation rename to .1 failed: {exc}",
+            flush=True,
+        )
+
+
 def log_event(kind: str, **data: Any) -> None:
     record = {"ts": now_iso(), "kind": kind, **data}
     line = json.dumps(record, ensure_ascii=False, separators=(",", ":"), default=str)
@@ -112,6 +184,7 @@ def log_event(kind: str, **data: Any) -> None:
         print(line, flush=True)
         try:
             os.makedirs(EVENT_DIR, exist_ok=True)
+            _rotate_log_if_needed()  # rotate before writing; failures are non-fatal
             with open(EVENT_LOG, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
         except Exception as exc:
