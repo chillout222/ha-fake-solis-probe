@@ -1,4 +1,4 @@
-﻿# ha-fake-solis-probe
+# ha-fake-solis-probe
 
 **Makes Tibber Bridge work with non-hybrid Solis inverters by emulating a supported Solis hybrid inverter over Modbus TCP.**
 
@@ -23,10 +23,7 @@ This Home Assistant addon solves that by running a local Modbus TCP server that 
 supported Solis hybrid inverter, feeding real-time PV data from your existing HA sensors to
 Tibber Bridge — without touching your real inverter or datalogger.
 
-The **default emulated model is Solis S6-EH1P** (type code `2030`), which is verified to work
-with Tibber Bridge. From v0.6.0, other Solis hybrid type codes can be configured experimentally
-— for example S6-EH3P (type code `2050`) has been smoke-tested with Tibber Bridge and app
-in one installation, but is not long-term verified.
+The **default emulated model is Solis S6-EH1P** (type code `2030`), which is the verified default for maximum compatibility. From v0.6.0, other Solis hybrid type codes can be configured. Specifically, **Solis S6-EH3P** (type code `2050`) has been **verified in one 3-phase installation** (including stable overnight operation, hourly identity polling, and proper zero-fallback behavior during nighttime shutdown). It is recommended as a more consistent emulated model for 3-phase setups, though it is not universally long-term verified across many different environments.
 See the [Inverter type code](#inverter-type-code) section below.
 
 ---
@@ -55,8 +52,8 @@ See [docs/architecture.md](docs/architecture.md) for full technical details.
 
 These observations were made empirically during development:
 
-- ✅ Tibber Bridge accepts inverter type code `2030` (S6-EH1P) as a valid model — **verified**
-- ⚠️ Inverter type code `2050` (S6-EH3P) smoke-tested: Tibber Bridge connects and app opens — **experimental, not long-term verified**
+- ✅ Tibber Bridge accepts inverter type code `2030` (S6-EH1P) as a valid model — **verified default**
+- ✅ Inverter type code `2050` (S6-EH3P) verified: Tibber Bridge connects, app opens, and stable overnight operation has been verified in one 3-phase installation — **verified in one installation**
 - ✅ Tibber Bridge polls 8 register blocks every 10 seconds (FC4, Input Registers)
 - ✅ Persistent TCP connection — no reconnects observed over hours of operation
 - ✅ Tibber makes **no write requests** — purely read-only integration confirmed
@@ -154,16 +151,16 @@ value at that moment — if it's negative, use `negate`. If positive, use `direc
 ### Inverter type code
 
 > **Note:** The emulated inverter type defaults to S6-EH1P (1-phase hybrid, type code 2030).
-> Only `2030` is fully verified to work with Tibber Bridge long-term.
-> Type code `2050` has been smoke-tested (Modbus + Tibber app) in one installation
-> but is not long-term verified. Other codes are untested.
+> While `2030` remains the recommended default for maximum compatibility, type code `2050` (S6-EH3P)
+> has been **verified in one 3-phase installation** (including overnight behavior). It is recommended
+> as a more consistent choice for 3-phase setups. Other codes remain untested.
 > See [docs/adapting-for-other-inverters.md](docs/adapting-for-other-inverters.md).
 
 | Code | Model | Phase | Tibber status |
 |---|---|---|---|
-| `2030` | S6-EH1P | 1-phase LV | ✅ Verified |
+| `2030` | S6-EH1P | 1-phase LV | ✅ Verified (Default) |
 | `2040` | S5-EH1P HV | 1-phase HV | Untested |
-| `2050` | S6-EH3P | 3-phase LV | ⚠️ Smoke-tested (experimental) |
+| `2050` | S6-EH3P | 3-phase LV | ✅ Verified in one installation (overnight operation confirmed) |
 | `2060` | S5-EH3P HV | 3-phase HV | Untested |
 
 ---

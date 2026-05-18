@@ -72,15 +72,15 @@ Solis model it is talking to. From v0.6.0 this is configurable via the
 
 | Code | Category | Phase | Battery voltage | Typical models | Tibber status |
 |---|---|---|---|---|---|
-| **2030** | LV Hybrid | 1-phase | LV | S6-EH1P | ✅ **Verified** |
+| **2030** | LV Hybrid | 1-phase | LV | S6-EH1P | ✅ **Verified (Default)** |
 | **2031** | LV AC-coupled | 1-phase | LV | S6-AC1P | Untested |
 | **2040** | HV Hybrid | 1-phase | HV | S5-EH1P, S6-EH1P-HV | Untested |
-| **2050** | LV Hybrid | 3-phase | LV | S6-EH3P | ⚠️ Smoke-tested (experimental) |
+| **2050** | LV Hybrid | 3-phase | LV | S6-EH3P | ✅ **Verified in one installation** |
 | **2060** | HV Hybrid | 3-phase | HV | S5-EH3P HV | Untested |
 
-> **Only type code 2030 is fully verified with Tibber Bridge.**
-> Type code 2050 has been smoke-tested (Modbus + Tibber app) in one installation
-> with no errors observed, but is not considered long-term verified.
+> **Default and verified: type code 2030 (S6-EH1P).** Keep this as default for maximum compatibility.
+> For 3-phase installations, **type code 2050 (S6-EH3P)** is recommended as the more consistent emulated model.
+> **Note on 2050 / S6-EH3P:** Verified with v0.6.0 on 2026-05-17/18 in one installation: Tibber Bridge remained connected overnight, hourly identity polling continued, and daily_energy fallback=zero was confirmed during inverter unavailable period. It is not universally long-term verified across many environments.
 > 2040 and 2060 are untested. If you test any code successfully, please open a
 > GitHub issue to update this table.
 
@@ -92,13 +92,12 @@ fake_inverter_type_code: 2030
 fake_inverter_model: Solis S6-EH1P
 ```
 
-**3-phase hybrid (smoke-tested in one installation — experimental):**
+**3-phase hybrid (verified in one installation):**
 ```
 fake_inverter_type_code: 2050
 fake_inverter_model: Solis S6-EH3P
 ```
-> ⚠️ Tibber Bridge connected and Tibber app opened normally in one test.
-> Not long-term verified. Monitor your Tibber integration after changing.
+> ℹ️ Verified with v0.6.0 on 2026-05-17/18 in one 3-phase installation: Tibber Bridge remained connected overnight, hourly identity polling continued, and daily_energy fallback=zero was confirmed during inverter unavailable period.
 
 ### Model string vs. type code
 

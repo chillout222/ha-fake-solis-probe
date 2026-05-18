@@ -72,16 +72,15 @@ It is configurable via the `fake_inverter_type_code` option (v0.6.0+).
 |---|---|---|---|---|---|
 | **1010** | String inverter | 1-phase | — | S5-GC, S6-GR1P | Not expected to work |
 | **1020** | String inverter | 3-phase | — | S5-GR3P, S6-GR3P | Not expected to work |
-| **2030** | LV Hybrid | 1-phase | LV | S6-EH1P | ✅ **Verified with Tibber** |
+| **2030** | LV Hybrid | 1-phase | LV | S6-EH1P | ✅ **Verified with Tibber (Default)** |
 | **2031** | LV AC-coupled | 1-phase | LV | S6-AC1P | Untested |
 | **2040** | HV Hybrid | 1-phase | HV | S5-EH1P, S6-EH1P-HV | Untested |
-| **2050** | LV Hybrid | 3-phase | LV | S6-EH3P | ⚠️ Smoke-tested (experimental) |
+| **2050** | LV Hybrid | 3-phase | LV | S6-EH3P | ✅ **Verified in one installation** |
 | **2060** | HV Hybrid | 3-phase | HV | S5-EH3P HV | Untested |
 
-> **Default and verified: type code 2030 (S6-EH1P).** Use this unless you have a
-> specific reason to experiment with another code.
-> Type code 2050 (S6-EH3P) has been smoke-tested — Tibber Bridge connected and
-> Tibber app opened normally in one installation — but is not long-term verified.
+> **Default and verified: type code 2030 (S6-EH1P).** Keep this as default for maximum compatibility.
+> For 3-phase installations, **type code 2050 (S6-EH3P)** is recommended as the more consistent emulated model.
+> **Note on 2050 / S6-EH3P:** Verified with v0.6.0 on 2026-05-17/18 in one installation: Tibber Bridge remained connected overnight, hourly identity polling continued, and daily_energy fallback=zero was confirmed during inverter unavailable period. It is not universally long-term verified across many environments.
 > 2040 and 2060 are untested. If you test a code successfully, open an issue.
 
 ### Model String vs. Type Code
@@ -100,13 +99,12 @@ fake_inverter_type_code: 2030   → register 35000 = 0x07EE
 fake_inverter_model: Solis S6-EH1P  → registers 33004-33018 = ASCII "Solis S6-EH1P\x00...S2WLSTFAKE001"
 ```
 
-**Experimental 3-phase configuration (smoke-tested, not long-term verified):**
+**3-phase configuration (verified in one installation):**
 ```
 fake_inverter_type_code: 2050   → register 35000 = 0x0802
 fake_inverter_model: Solis S6-EH3P  → registers 33004-33018 = ASCII "Solis S6-EH3P\x00...S2WLSTFAKE001"
 ```
-> ⚠️ Tibber Bridge connected and Tibber app opened normally in one test with 2050.
-> Not long-term verified. Monitor your Tibber integration after switching.
+> ℹ️ Verified with v0.6.0 on 2026-05-17/18 in one 3-phase installation: Tibber Bridge remained connected overnight, hourly identity polling continued, and daily_energy fallback=zero was confirmed during inverter unavailable period.
 
 A mismatch (e.g., type_code=2050 but model_string="Solis S6-EH1P") will probably
 show wrong info in Tibber's app view but not cause functional problems. There is no
