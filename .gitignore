@@ -12,3 +12,27 @@ events_*.jsonl
 *.log
 /data/
 registers.json
+
+# --- Home Assistant Safety Net ---
+# Local HA data and generated analysis artifacts
+ha_history_week.json
+simulation_results.json
+simulation_report.html
+events.jsonl*
+registers.json
+
+# Secrets and credentials
+secrets/
+secrets.yaml
+*.token
+*.key
+*.pem
+*.crt
+*.pfx
+*.p12
+
+# Home Assistant protected local data
+.storage/
+*.db
+*.db-*
+home-assistant_v2.db*
