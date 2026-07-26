@@ -21,8 +21,22 @@ Use the [feature request template](.github/ISSUE_TEMPLATE/feature_request.md).
 - Keep PRs small and focused — one change per PR
 - Follow [PEP 8](https://pep8.org/) for Python code
 - Update `CHANGELOG.md` under `[Unreleased]` with a short description of your change
-- Run syntax check before submitting: `python -m py_compile fake_solis_probe/fake_solis_probe.py`
+- Run the development checks before submitting (see below)
 - Do not commit personal information (IP addresses, entity IDs, tokens, real names unless you choose to)
+
+## Development Checks
+
+Install the development-only tools, then run the same checks as CI:
+
+```sh
+python -m pip install --requirement requirements-dev.txt
+python -m ruff check .
+python -m ruff format --check .
+python -m pytest
+```
+
+Ruff and pytest are development dependencies only. The Home Assistant add-on
+continues to use only the Python standard library at runtime.
 
 ## Testing Locally
 

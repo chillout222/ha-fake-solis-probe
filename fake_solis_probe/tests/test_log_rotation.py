@@ -1,333 +1,187 @@
-#!/usr/bin/env python3
-"""Log rotation tests — v0.7.0.
+"""Log rotation tests
 
-Tests _rotate_log_if_needed() using a real temporary directory and real file I/O
-so that os.path.getsize / os.replace / os.path.exists exercise actual disk behaviour.
+Tests rotate_log_if_needed() using a real temporary directory and real file I/O,
+so os.path.getsize, os.replace, and os.path.exists exercise actual disk behaviour.
 
-Run standalone (no external dependencies required):
-    python fake_solis_probe/tests/test_log_rotation.py
+Run with pytest:
+    python -m pytest fake_solis_probe/tests/test_log_rotation.py
 """
 
-import os
-import sys
-import json
-import types
-import tempfile
-import shutil
-import unittest.mock as mock
-import builtins
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from solis_probe import config, event_log
 
 
 # ---------------------------------------------------------------------------
-# Module loader (same pattern as test_behavior.py)
+# Fixtures and helpers use real temporary paths, not a stubbed filesystem.
 # ---------------------------------------------------------------------------
 
-def _build_stub_module(event_log: str, options: dict) -> types.ModuleType:
-    """Load fake_solis_probe with I/O side-effects neutralised except for
-    the log rotation paths (which use the real os module on `event_log`).
+
+@pytest.fixture
+def log_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point the real logger at an isolated temporary event log."""
+    path = tmp_path / "events.jsonl"
+    config.configure_options()
+    monkeypatch.setattr(event_log, "EVENT_DIR", str(tmp_path))
+    monkeypatch.setattr(event_log, "EVENT_LOG", str(path))
+    return path
+
+
+def configure_rotation(max_bytes: int, backup_count: int) -> None:
+    """Set the two rotation options for one test case."""
+    config.OPTIONS["log_max_bytes"] = max_bytes
+    config.OPTIONS["log_backup_count"] = backup_count
+
+
+def write_bytes(path: Path, size: int) -> None:
+    """Write ``size`` bytes of dummy content to ``path``."""
+    path.write_bytes(b"x" * size)
+
+
+def test_initialize_log_creates_the_directory_and_log_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Startup owns the event-log path instead of delegating it to run.sh."""
+    path = tmp_path / "nested" / "events.jsonl"
+    config.configure_options()
+    monkeypatch.setattr(event_log, "EVENT_DIR", str(path.parent))
+    monkeypatch.setattr(event_log, "EVENT_LOG", str(path))
+
+    event_log.initialize_log()
+
+    assert path.parent.is_dir()
+    assert path.is_file()
+
+
+@pytest.mark.parametrize(
+    ("max_bytes", "payload_size"),
+    [
+        pytest.param(100, 99, id="below-threshold"),
+        pytest.param(0, 200, id="rotation-disabled"),
+    ],
+)
+def test_rotation_is_skipped_when_not_required(
+    log_path: Path,
+    max_bytes: int,
+    payload_size: int,
+) -> None:
+    """Below threshold must not rotate; log_max_bytes=0 leaves a large log untouched."""
+    configure_rotation(max_bytes, 3)
+    write_bytes(log_path, payload_size)
+
+    event_log.rotate_log_if_needed()
+
+    assert log_path.exists()
+    assert log_path.stat().st_size == payload_size
+    assert not log_path.with_name("events.jsonl.1").exists()
+
+
+@pytest.mark.parametrize(
+    "payload_size",
+    [
+        pytest.param(100, id="at-threshold"),
+        pytest.param(200, id="above-threshold"),
+    ],
+)
+def test_rotation_moves_current_log_to_first_backup(
+    log_path: Path,
+    payload_size: int,
+) -> None:
+    """A file at or above the threshold is renamed to .1."""
+    configure_rotation(100, 3)
+    write_bytes(log_path, payload_size)
+
+    event_log.rotate_log_if_needed()
+
+    first_backup = log_path.with_name("events.jsonl.1")
+    assert not log_path.exists()
+    assert first_backup.stat().st_size == payload_size
+
+
+@pytest.mark.parametrize(
+    ("backup_count", "expected_sizes"),
+    [
+        pytest.param(2, (200, 150), id="limited-backups"),
+        pytest.param(3, (200, 150, 120), id="cascade-all-backups"),
+    ],
+)
+def test_rotation_cascades_existing_backups(
+    log_path: Path,
+    backup_count: int,
+    expected_sizes: tuple[int, ...],
+) -> None:
+    """Cascade: .2 → .3, .1 → .2, current → .1.
+
+    With backup_count=2, .1 shifts to .2 and overwrites the oldest .2; no .3
+    backup is retained.
     """
-    src = os.path.join(os.path.dirname(__file__), "..", "fake_solis_probe.py")
-    src = os.path.normpath(src)
+    configure_rotation(100, backup_count)
+    # Pre-create existing backups with distinct sizes so we can track them.
+    write_bytes(log_path, 200)
+    write_bytes(log_path.with_name("events.jsonl.1"), 150)
+    write_bytes(log_path.with_name("events.jsonl.2"), 120)
 
-    with open(src, "r", encoding="utf-8") as f:
-        source = f.read()
+    event_log.rotate_log_if_needed()
 
-    mod = types.ModuleType("fake_solis_probe_rot_test")
-    mod.__file__ = src
-
-    real_open = builtins.open
-
-    def patched_open(file, *a, **kw):
-        # Redirect options.json to our stub options
-        if "options.json" in str(file):
-            import io
-            return io.StringIO(json.dumps(options))
-        # Let events.jsonl writes go to the real temp path
-        return real_open(file, *a, **kw)
-
-    with mock.patch("builtins.open", patched_open):
-        with mock.patch("os.makedirs"):          # suppress dir creation at module load
-            with mock.patch("os.stat", side_effect=FileNotFoundError):
-                exec(compile(source, src, "exec"), mod.__dict__)
-
-    # Point the module at the temp log path
-    mod.EVENT_LOG = event_log
-    mod.EVENT_DIR = os.path.dirname(event_log)
-    # Silence log_event's stdout print and file write during these tests
-    mod.log_event = lambda kind, **data: None
-    # Apply test options
-    mod.OPTIONS.update(options)
-    return mod
+    assert not log_path.exists()
+    for number, expected_size in enumerate(expected_sizes, start=1):
+        assert (
+            log_path.with_name(f"events.jsonl.{number}").stat().st_size == expected_size
+        )
+    assert not log_path.with_name(f"events.jsonl.{backup_count + 1}").exists()
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "backup_count",
+    [
+        pytest.param(0, id="zero"),
+        pytest.param(-1, id="negative"),
+    ],
+)
+def test_nonpositive_backup_counts_truncate_in_place(
+    log_path: Path,
+    backup_count: int,
+) -> None:
+    """Zero and negative backup counts truncate in place with no .1 backup.
 
-def assert_eq(name, actual, expected):
-    if actual != expected:
-        print(f"  FAIL  {name}: expected {expected!r}, got {actual!r}")
-        return False
-    print(f"  PASS  {name}: {actual!r}")
-    return True
+    For a negative backup count, this guards the regression where the value
+    bypassed the zero-only truncate branch and fell through to renaming
+    events.jsonl to events.jsonl.1.
+    """
+    configure_rotation(100, backup_count)
+    write_bytes(log_path, 200)
 
+    event_log.rotate_log_if_needed()
 
-def assert_true(name, value):
-    if not value:
-        print(f"  FAIL  {name}: expected True, got {value!r}")
-        return False
-    print(f"  PASS  {name}: True")
-    return True
-
-
-def assert_false(name, value):
-    if value:
-        print(f"  FAIL  {name}: expected False, got {value!r}")
-        return False
-    print(f"  PASS  {name}: False")
-    return True
-
-
-def write_bytes(path: str, n: int) -> None:
-    """Write n bytes of dummy content to path."""
-    with open(path, "wb") as f:
-        f.write(b"x" * n)
+    assert log_path.exists()
+    assert log_path.stat().st_size == 0
+    assert not log_path.with_name("events.jsonl.1").exists()
 
 
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
-
-def test_no_rotation_below_threshold(tmpdir: str) -> bool:
-    """File size below threshold: rotation must NOT occur."""
-    print("\n[Test 1] No rotation below threshold")
-    event_log = os.path.join(tmpdir, "events.jsonl")
-    options = {"log_max_bytes": 1000, "log_backup_count": 3}
-    m = _build_stub_module(event_log, options)
-
-    write_bytes(event_log, 100)  # well below 1000
-
-    m._rotate_log_if_needed()
-
-    ok = True
-    ok &= assert_true("events.jsonl still exists", os.path.exists(event_log))
-    ok &= assert_false("events.jsonl.1 must NOT exist", os.path.exists(event_log + ".1"))
-    ok &= assert_eq("file size unchanged", os.path.getsize(event_log), 100)
-    return ok
-
-
-def test_rotation_triggered(tmpdir: str) -> bool:
-    """File size at or above threshold: current log renamed to .1."""
-    print("\n[Test 2] Rotation triggered — current log becomes .1")
-    event_log = os.path.join(tmpdir, "events.jsonl")
-    options = {"log_max_bytes": 100, "log_backup_count": 3}
-    m = _build_stub_module(event_log, options)
-
-    content = b"A" * 200  # 200 bytes > 100 bytes threshold
-    write_bytes(event_log, 200)
-
-    m._rotate_log_if_needed()
-
-    ok = True
-    ok &= assert_false("events.jsonl must NOT exist (was renamed)", os.path.exists(event_log))
-    ok &= assert_true("events.jsonl.1 must exist", os.path.exists(event_log + ".1"))
-    ok &= assert_eq("events.jsonl.1 size", os.path.getsize(event_log + ".1"), 200)
-    return ok
-
-
-def test_cascade_rotation(tmpdir: str) -> bool:
-    """Cascade: .2 → .3, .1 → .2, current → .1."""
-    print("\n[Test 3] Cascade rotation (.2 -> .3, .1 -> .2, current -> .1)")
-    event_log = os.path.join(tmpdir, "events.jsonl")
-    options = {"log_max_bytes": 100, "log_backup_count": 3}
-    m = _build_stub_module(event_log, options)
-
-    # Pre-create existing backups with distinct sizes so we can track them
-    write_bytes(event_log,           200)  # current (200 B) — will become .1
-    write_bytes(event_log + ".1",    150)  # will become .2
-    write_bytes(event_log + ".2",    120)  # will become .3
-
-    m._rotate_log_if_needed()
-
-    ok = True
-    ok &= assert_false("events.jsonl must NOT exist", os.path.exists(event_log))
-    ok &= assert_eq("events.jsonl.1 size == 200", os.path.getsize(event_log + ".1"), 200)
-    ok &= assert_eq("events.jsonl.2 size == 150", os.path.getsize(event_log + ".2"), 150)
-    ok &= assert_eq("events.jsonl.3 size == 120", os.path.getsize(event_log + ".3"), 120)
-    return ok
-
-
-def test_cascade_does_not_exceed_backup_count(tmpdir: str) -> bool:
-    """Oldest backup beyond backup_count is discarded (overwritten by os.replace)."""
-    print("\n[Test 4] Oldest backup beyond backup_count is dropped")
-    event_log = os.path.join(tmpdir, "events.jsonl")
-    options = {"log_max_bytes": 100, "log_backup_count": 2}  # keep only .1 and .2
-    m = _build_stub_module(event_log, options)
-
-    write_bytes(event_log,           200)
-    write_bytes(event_log + ".1",    150)
-    write_bytes(event_log + ".2",    120)  # this gets pushed to .3, but .3 is beyond backup_count=2
-
-    m._rotate_log_if_needed()
-
-    ok = True
-    # With backup_count=2: range(1, 0, -1) shifts .1 → .2 only (no .3 step)
-    # So .2 gets overwritten by old .1, and current goes to .1
-    ok &= assert_false("events.jsonl must NOT exist", os.path.exists(event_log))
-    ok &= assert_eq("events.jsonl.1 size == 200", os.path.getsize(event_log + ".1"), 200)
-    ok &= assert_eq("events.jsonl.2 size == 150", os.path.getsize(event_log + ".2"), 150)
-    ok &= assert_false("events.jsonl.3 must NOT exist", os.path.exists(event_log + ".3"))
-    return ok
-
-
-def test_backup_count_zero_truncates(tmpdir: str) -> bool:
-    """backup_count=0: file is truncated in-place, no .1 created."""
-    print("\n[Test 5] backup_count=0 -> truncate in-place")
-    event_log = os.path.join(tmpdir, "events.jsonl")
-    options = {"log_max_bytes": 100, "log_backup_count": 0}
-    m = _build_stub_module(event_log, options)
-
-    write_bytes(event_log, 200)
-
-    m._rotate_log_if_needed()
-
-    ok = True
-    ok &= assert_true("events.jsonl still exists (truncated)", os.path.exists(event_log))
-    ok &= assert_eq("events.jsonl size == 0 (truncated)", os.path.getsize(event_log), 0)
-    ok &= assert_false("events.jsonl.1 must NOT exist", os.path.exists(event_log + ".1"))
-    return ok
-
-
-def test_max_bytes_zero_disables_rotation(tmpdir: str) -> bool:
-    """log_max_bytes=0: rotation disabled; large file left untouched."""
-    print("\n[Test 6] log_max_bytes=0 -> rotation disabled")
-    event_log = os.path.join(tmpdir, "events.jsonl")
-    options = {"log_max_bytes": 0, "log_backup_count": 3}
-    m = _build_stub_module(event_log, options)
-
-    write_bytes(event_log, 99_999_999)  # ~100 MB — should not rotate
-
-    m._rotate_log_if_needed()
-
-    ok = True
-    ok &= assert_true("events.jsonl still exists", os.path.exists(event_log))
-    ok &= assert_false("events.jsonl.1 must NOT exist", os.path.exists(event_log + ".1"))
-    return ok
-
-
-def test_missing_file_does_not_crash(tmpdir: str) -> bool:
+def test_missing_log_file_does_not_raise_or_create_a_backup(log_path: Path) -> None:
     """If events.jsonl does not exist yet, rotation must not raise."""
-    print("\n[Test 7] Missing events.jsonl — no crash")
-    event_log = os.path.join(tmpdir, "events.jsonl")
-    options = {"log_max_bytes": 100, "log_backup_count": 3}
-    m = _build_stub_module(event_log, options)
-    # Do NOT create the file
+    configure_rotation(100, 3)
 
-    raised = False
-    try:
-        m._rotate_log_if_needed()
-    except Exception as exc:
-        raised = True
-        print(f"  FAIL  unexpected exception: {exc}")
+    # Do NOT create the file.
+    event_log.rotate_log_if_needed()
 
-    ok = assert_false("no exception raised", raised)
-    ok &= assert_false("events.jsonl.1 must NOT exist", os.path.exists(event_log + ".1"))
-    return ok
+    assert not log_path.exists()
+    assert not log_path.with_name("events.jsonl.1").exists()
 
 
-def test_log_event_integration(tmpdir: str) -> bool:
-    """Verify _rotate_log_if_needed() fires correctly when called from within
-    the same path log_event() uses — pre-fill to threshold then rotate."""
-    print("\n[Test 8] log_event() integration -- rotation via direct call after pre-fill")
-    event_log = os.path.join(tmpdir, "events.jsonl")
-    options = {"log_max_bytes": 200, "log_backup_count": 2}
-    m = _build_stub_module(event_log, options)
+def test_log_event_rotates_then_writes_the_new_event(log_path: Path) -> None:
+    """Verify log rotation fires through the same path log_event() uses."""
+    configure_rotation(200, 2)
+    # Pre-fill the file to above the threshold.
+    write_bytes(log_path, 250)
 
-    # Pre-fill the file to above the threshold
-    write_bytes(event_log, 250)
+    # log_event() rotates first, then appends the new event.
+    event_log.log_event("test_event")
 
-    # Call the rotation helper directly (same code path log_event() uses)
-    m._rotate_log_if_needed()
-
-    ok = True
-    ok &= assert_false("events.jsonl must NOT exist after rotation", os.path.exists(event_log))
-    ok &= assert_true("events.jsonl.1 must exist", os.path.exists(event_log + ".1"))
-    ok &= assert_eq("events.jsonl.1 size == 250", os.path.getsize(event_log + ".1"), 250)
-    return ok
-
-
-def test_backup_count_negative_truncates(tmpdir: str) -> bool:
-    """backup_count=-1 (negative): must truncate in-place, must NOT create .1.
-
-    Regression test for the edge case where backup_count < 0 would previously
-    bypass the truncate branch (== 0 check) and fall through to the cascade
-    loop, which would then unconditionally rename events.jsonl -> events.jsonl.1.
-    """
-    print("\n[Test 9] backup_count=-1 -> must truncate, not rename to .1 (edge case)")
-    event_log = os.path.join(tmpdir, "events.jsonl")
-    options = {"log_max_bytes": 100, "log_backup_count": -1}
-    m = _build_stub_module(event_log, options)
-
-    write_bytes(event_log, 200)  # above threshold
-
-    m._rotate_log_if_needed()
-
-    ok = True
-    ok &= assert_true("events.jsonl still exists (truncated)", os.path.exists(event_log))
-    ok &= assert_eq("events.jsonl size == 0 (truncated)", os.path.getsize(event_log), 0)
-    ok &= assert_false("events.jsonl.1 must NOT exist", os.path.exists(event_log + ".1"))
-    return ok
-
-
-# ---------------------------------------------------------------------------
-# Runner
-# ---------------------------------------------------------------------------
-
-def main() -> int:
-    print("=" * 60)
-    print("Fake Solis Probe v0.7.0 — log rotation tests")
-    print("=" * 60)
-
-    results = []
-    tmpdirs = []
-    tests = [
-        test_no_rotation_below_threshold,
-        test_rotation_triggered,
-        test_cascade_rotation,
-        test_cascade_does_not_exceed_backup_count,
-        test_backup_count_zero_truncates,
-        test_max_bytes_zero_disables_rotation,
-        test_missing_file_does_not_crash,
-        test_log_event_integration,
-        test_backup_count_negative_truncates,  # edge case: negative value
-    ]
-
-    for fn in tests:
-        tmpdir = tempfile.mkdtemp(prefix="solis_rot_test_")
-        tmpdirs.append(tmpdir)
-        try:
-            ok = fn(tmpdir)
-        except Exception as exc:
-            print(f"  FATAL  {fn.__name__}: unhandled exception: {exc}")
-            import traceback
-            traceback.print_exc()
-            ok = False
-        results.append(ok)
-
-    # Cleanup
-    for d in tmpdirs:
-        shutil.rmtree(d, ignore_errors=True)
-
-    passed = sum(results)
-    total = len(results)
-    print(f"\n{'=' * 60}")
-    print(f"Result: {passed}/{total} tests passed")
-    if passed == total:
-        print("ALL TESTS PASSED")
-        return 0
-    print("SOME TESTS FAILED")
-    return 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+    assert log_path.with_name("events.jsonl.1").stat().st_size == 250
+    assert '"kind":"test_event"' in log_path.read_text(encoding="utf-8")

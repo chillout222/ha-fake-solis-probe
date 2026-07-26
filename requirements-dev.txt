@@ -1,0 +1,3 @@
+pytest==9.1.1
+ruff==0.16.0
+yamllint==1.37.1
