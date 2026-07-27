@@ -23,6 +23,14 @@ Real Solis 5P inverter (DC strings → AC grid)
 The addon **never communicates with the real inverter or datalogger**. It only reads
 from HA's internal state machine via the Supervisor API.
 
+## Runtime Module Layout
+
+`fake_solis_probe/fake_solis_probe.py` is intentionally only an executable
+launcher. The import-safe `fake_solis_probe/solis_probe/` package separates
+configuration, event logging, sensor caches, register storage, telemetry,
+Home Assistant access, validation, polling, Modbus, HTTP probing, and
+application startup.
+
 ## Why Port 502 on the HA IP?
 
 Tibber Bridge discovers inverters by scanning the local LAN for open port 502 (standard

@@ -17,13 +17,19 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install yamllint
-        run: pip install yamllint
+      - name: Install development tools
+        run: pip install --requirement requirements-dev.txt
 
       - name: Lint YAML files
         run: yamllint -d relaxed .
 
-      - name: Check Python syntax
+      - name: Lint and check Python formatting
         run: |
-          python -m py_compile fake_solis_probe/fake_solis_probe.py
-          echo "Python syntax OK"
+          python -m ruff check .
+          python -m ruff format --check .
+
+      - name: Compile Python sources
+        run: python3 -m compileall -q fake_solis_probe
+
+      - name: Run tests
+        run: python -m pytest

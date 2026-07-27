@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Migrated the regression suite to pytest, using fixtures and parameterized
+  cases for shared fallback and log-rotation behavior.
+- Added Ruff linting and formatting checks to the development and CI workflow.
+- Split the executable into an import-safe `solis_probe` runtime package with
+  a thin `fake_solis_probe.py` launcher, so tests use normal imports rather
+  than re-executing production code with patched global I/O.
+
 ## [0.7.0] - 2026-05-18
 
 ### Added

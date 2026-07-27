@@ -1,7 +1,9 @@
 name: "Fake Solis Probe"
 version: "0.7.0"
 slug: "fake_solis_probe"
-description: "Emulates a supported Solis hybrid inverter via Modbus TCP so Tibber Bridge can read PV data"
+description: >-
+  Emulates a supported Solis hybrid inverter via Modbus TCP so Tibber Bridge
+  can read PV data
 arch:
   - aarch64
   - amd64

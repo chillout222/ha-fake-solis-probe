@@ -13,6 +13,7 @@ RUN apk add --no-cache \
 
 COPY run.sh /run.sh
 COPY fake_solis_probe.py /fake_solis_probe.py
+COPY solis_probe /solis_probe
 COPY requirements.txt /requirements.txt
 
 RUN chmod a+x /run.sh
